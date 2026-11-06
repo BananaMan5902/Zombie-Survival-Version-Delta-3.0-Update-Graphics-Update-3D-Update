@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zombie Survival</title>
+<style>
+:root{--bg:#0d1511;--fg:#e8f0e4;--panel:rgba(10,16,12,.78);--hp:#d33;--ar:#4a9de0;--gold:#f2c94c}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,sans-serif;overflow:hidden}
+canvas{display:block}
+.hud{position:fixed;pointer-events:none;text-shadow:0 1px 3px #000}
+#top{top:calc(10px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);text-align:center;font-size:22px;font-weight:700}
+#top small{display:block;font-size:13px;font-weight:400}
+#mm{top:calc(10px + env(safe-area-inset-top,0px));right:10px;border:2px solid #000;border-radius:6px;background:#1c2a1c;width:170px;height:170px}
+#bl{left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));width:240px}
+.bar{height:16px;background:#0008;border:1px solid #000;margin-top:4px;border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%}
+#br{right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));text-align:right}
+#cross{top:50%;left:50%;width:6px;height:6px;margin:-3px;border:2px solid #fff;border-radius:50%;opacity:.8}
+#hm{top:50%;left:50%;width:26px;height:26px;margin:-13px;border:2px solid #f44;opacity:0;transform:rotate(45deg)}
+#prompt{top:62%;left:50%;transform:translateX(-50%);font-weight:700;color:var(--gold)}
+#banner{top:30%;left:50%;transform:translateX(-50%);font-size:40px;font-weight:800;opacity:0;transition:opacity .6s}
+#dmg{inset:0;background:radial-gradient(transparent 40%,#e00);opacity:0}
+#shop{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--panel);border:2px solid var(--gold);border-radius:8px;padding:12px 16px;display:none;min-width:300px}
+#shop div{padding:3px 0}.dim{opacity:.45}
+#ov{position:fixed;inset:0;background:#000b;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}
+#ov h1{margin:0;font-size:44px;color:#9c6}
+button{font:inherit;font-size:18px;padding:10px 28px;border:0;border-radius:6px;background:#6a3;color:#fff;cursor:pointer}
+</style></head><body>
+<div id="top" class="hud"><span id="wave">WAVE 1</span><small id="left"></small></div>
+<canvas id="mm" class="hud" width="170" height="170"></canvas>
+<div id="bl" class="hud"><div>HEALTH <span id="hpt"></span></div><div class="bar"><i id="hp" style="background:var(--hp)"></i></div><div class="bar"><i id="ar" style="background:var(--ar)"></i></div></div>
+<div id="br" class="hud"><div id="money" style="font-size:22px;color:var(--gold)"></div><div id="bar"></div><div id="kills"></div></div>
+<div id="cross" class="hud"></div><div id="hm" class="hud"></div><div id="prompt" class="hud"></div><div id="banner" class="hud"></div><div id="dmg" class="hud"></div>
+<div id="shop"></div>
+<div id="ov"><h1>ZOMBIE SURVIVAL</h1><div id="ovt">WASD move · Mouse aim · Click/Space shoot · Shift sprint<br>1–4 switch gun · E shop (center of map) · Lakes slow you down<br>Move the mouse to look around (if it doesn’t lock, move it toward the screen edges)</div><button id="go">PLAY</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const R=new THREE.WebGLRenderer({antialias:true});R.setSize(innerWidth,innerHeight);document.body.prepend(R.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x1a2a24);scene.fog=new THREE.Fog(0x1a2a24,15,100);
+const cam=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,200);cam.rotation.order='YXZ';scene.add(cam);
+scene.add(new THREE.HemisphereLight(0xa8c0d0,0x2a3a22,1));
+const sun=new THREE.DirectionalLight(0xffeedd,.6);sun.position.set(50,80,30);scene.add(sun);
+addEventListener('resize',()=>{R.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()});
+const mat=c=>new THREE.MeshLambertMaterial({color:c});
+const box=(w,h,d,c,x,y,z,p=scene)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c));m.position.set(x,y,z);p.add(m);return m};
+// ---- MAP ----
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),mat(0x3b5a2c));ground.rotation.x=-Math.PI/2;scene.add(ground);
+const lakes=[[28,-8,9],[-32,8,11],[8,-50,10],[60,60,12]];
+lakes.forEach(([x,z,r])=>{const m=new THREE.Mesh(new THREE.CircleGeometry(r,32),new THREE.MeshLambertMaterial({color:0x2a6fb5}));m.rotation.x=-Math.PI/2;m.position.set(x,.05,z);scene.add(m)});
+const walls=[],houses=[[-45,-40],[45,-45],[-65,35],[62,20],[-20,55],[20,60],[-75,-5],[75,-20]];
+function wall(x1,x2,z1,z2,h=4,c=0x8b6b4a){walls.push({x1,x2,z1,z2});box(x2-x1,h,z2-z1,c,(x1+x2)/2,h/2,(z1+z2)/2)}
+houses.forEach(([x,z])=>{const w=7,d=5,t=.5;
+wall(x-w,x+w,z-d,z-d+t);wall(x-w,x-w+t,z-d,z+d);wall(x+w-t,x+w,z-d,z+d);
+wall(x-w,x-1.6,z+d-t,z+d);wall(x+1.6,x+w,z+d-t,z+d);box(2*w+1,.4,2*d+1,0x5a2d2d,x,4.2,z);box(3.2,1,.5,0x8b6b4a,x,3.5,z+d-.25)});
+// shop
+box(9,.1,9,0xf2c94c,0,.06,0);[[-4,-4],[4,-4],[-4,4],[4,4]].forEach(([x,z])=>box(.4,4,.4,0xc9a227,x,2,z));box(10,.4,10,0xf2c94c,0,4.2,0);
+{const c=document.createElement('canvas');c.width=256;c.height=64;const g=c.getContext('2d');g.fillStyle='#222';g.fillRect(0,0,256,64);g.fillStyle='#f2c94c';g.font='bold 44px sans-serif';g.textAlign='center';g.fillText('SHOP',128,48);
+const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c)}));s.position.set(0,6,0);s.scale.set(6,1.5,1);scene.add(s)}
+const inLake=p=>lakes.some(([x,z,r])=>Math.hypot(p.x-x,p.z-z)<r);
+function resolve(p,r){for(const b of walls){const cx=Math.max(b.x1,Math.min(p.x,b.x2)),cz=Math.max(b.z1,Math.min(p.z,b.z2)),dx=p.x-cx,dz=p.z-cz,d=Math.hypot(dx,dz);
+if(d<r){if(d<1e-4)p.x+=r;else{p.x+=dx/d*(r-d);p.z+=dz/d*(r-d)}}}p.x=Math.max(-97,Math.min(97,p.x));p.z=Math.max(-97,Math.min(97,p.z))}
+function rayBox(ox,oy,oz,dx,dy,dz,b){let t0=0,t1=1e9;for(const[o,d,lo,hi]of[[ox,dx,b.x1,b.x2],[oy,dy,0,4],[oz,dz,b.z1,b.z2]]){if(Math.abs(d)<1e-8){if(o<lo||o>hi)return 1e9}else{let a=(lo-o)/d,c=(hi-o)/d;if(a>c)[a,c]=[c,a];t0=Math.max(t0,a);t1=Math.min(t1,c);if(t0>t1)return 1e9}}return t0}
+// ---- DATA ----
+const ZT={normal:{hp:30,sp:2.4,dmg:8,s:1,c:0x6b8f5a,$:10,r:.5,col:'#6b8f5a'},fast:{hp:14,sp:6,dmg:5,s:.85,c:0xb7c24a,$:15,r:.4,col:'#e5f04a'},
+mid:{hp:75,sp:4,dmg:12,s:1.15,c:0x4f7d8a,$:30,r:.6,col:'#4fb0d0'},chonky:{hp:260,sp:1.8,dmg:28,s:1.7,c:0x7a3b52,$:70,r:.9,col:'#c03a70'}};
+const G=[{n:'Pistol',dmg:22,rate:.35,pel:1,spr:.004,pierce:1,cost:0,len:.4,c:0x333333,fall:1e9},
+{n:'Shotgun',dmg:13,rate:.85,pel:9,spr:.07,pierce:1,cost:150,len:.8,c:0x7a5530,fall:22},
+{n:'Machine Gun',dmg:15,rate:.075,pel:1,spr:.03,pierce:3,cost:400,len:.85,c:0x444a55,fall:1e9},
+{n:'Rifle',dmg:210,rate:1.05,pel:1,spr:0,pierce:2,cost:800,len:1.1,c:0x2a3a2a,fall:1e9}];
+const own=[1,0,0,0];let cur=0,mult=1,money=0,kills=0,hp=100,maxhp=100,armor=0;
+const P={x:0,z:12},zs=[];let yaw=0,pitch=0,nextFire=0,recoil=0,hmT=0,dmgT=0;
+cam.rotation.set(0,0,0);
+const gunG=new THREE.Group();cam.add(gunG);gunG.position.set(.28,-.25,-.55);const gunM=box(.09,.13,1,0x333333,0,0,0,gunG);
+const flash=new THREE.PointLight(0xffaa44,0,10);flash.position.set(.3,-.2,-1.2);cam.add(flash);
+function setGun(i){cur=i;gunM.material.color.set(G[i].c);gunM.scale.z=G[i].len;gunM.position.z=-G[i].len/2}setGun(0);
+// ---- ZOMBIES ----
+function spawn(){const t=pick();const d=ZT[t];let x,z,k=0;do{const a=Math.random()*6.28,r=45+Math.random()*40;x=Math.max(-95,Math.min(95,P.x+Math.cos(a)*r));z=Math.max(-95,Math.min(95,P.z+Math.sin(a)*r))}while(Math.hypot(x-P.x,z-P.z)<35&&k++<20);
+const g=new THREE.Group();box(.7,.9,.4,d.c,0,.95,0,g);box(.45,.45,.45,d.c+0x202020,0,1.65,0,g);box(.2,.2,.7,d.c,-.4,1.2,.4,g);box(.2,.2,.7,d.c,.4,1.2,.4,g);box(.25,.6,.25,0x333344,-.18,.3,0,g);box(.25,.6,.25,0x333344,.18,.3,0,g);
+g.scale.setScalar(d.s);g.position.set(x,0,z);scene.add(g);const h=d.hp*(1+wave*.06);zs.push({m:g,t,d,hp:h,x,z,cd:0,ph:Math.random()*6})}
+function pick(){const w=[['normal',1],['fast',wave>=2?.4:0],['mid',wave>=3?.35:0],['chonky',wave>=5?.18:0]];let s=w.reduce((a,b)=>a+b[1],0)*Math.random();for(const[n,v]of w){if((s-=v)<=0)return n}return'normal'}
+// ---- SHOOTING ----
+const bullets=[],bGeo=new THREE.BoxGeometry(.05,.05,.8),bMat=[0xffee77,0xffaa33,0xff6644].map(c=>new THREE.MeshBasicMaterial({color:c}));
+function tracer(ox,oy,oz,dx,dy,dz,end,g){const rx=Math.cos(yaw),rz=-Math.sin(yaw),sx=ox+rx*.28+dx*1.2,sy=oy-.2+dy*1.2,sz=oz+rz*.28+dz*1.2;
+const m=new THREE.Mesh(bGeo,bMat[g.pel>1?1:cur==3?2:0]);m.position.set(sx,sy,sz);m.lookAt(sx+dx,sy+dy,sz+dz);if(g.pel>1)m.scale.set(.6,.6,.5);scene.add(m);bullets.push({m,dx,dy,dz,t:0,end:Math.max(.5,end-1.2)})}
+function fire(now){const g=G[cur];if(now<nextFire)return;nextFire=now+g.rate;recoil=1;flash.intensity=2;
+const cp=Math.cos(pitch);for(let p=0;p<g.pel;p++){let dx=-Math.sin(yaw)*cp+(Math.random()-.5)*g.spr*2,dy=Math.sin(pitch)+(Math.random()-.5)*g.spr*2,dz=-Math.cos(yaw)*cp+(Math.random()-.5)*g.spr*2;const l=Math.hypot(dx,dy,dz);dx/=l;dy/=l;dz/=l;
+const ox=P.x,oy=1.7,oz=P.z;let tw=80;for(const b of walls)tw=Math.min(tw,rayBox(ox,oy,oz,dx,dy,dz,b));const hits=[];
+for(const z of zs){const s=z.d.s,sp=[[1.65*s,.6*z.d.r],[1*s,z.d.r],[.4*s,z.d.r*.8]];let best=1e9,head=false;
+sp.forEach(([y,r],i)=>{const cx=z.x-ox,cy=y-oy,cz=z.z-oz,tca=cx*dx+cy*dy+cz*dz;if(tca<0)return;const d2=cx*cx+cy*cy+cz*cz-tca*tca;if(d2<r*r){const t=tca-Math.sqrt(r*r-d2);if(t<best){best=t;head=i==0}}});
+if(best<tw)hits.push({z,t:best,head})}
+hits.sort((a,b)=>a.t-b.t);const hit=hits.slice(0,g.pierce);tracer(ox,oy,oz,dx,dy,dz,hit.length?hit[hit.length-1].t:tw,g);hit.forEach(h=>{h.z.hp-=g.dmg*mult*(h.head?2:1)*Math.max(.1,1-h.t/g.fall);hmT=.15;if(h.z.hp<=0&&!h.z.dead){h.z.dead=1;scene.remove(h.z.m);money+=h.z.d.$;kills++}})}}
+// ---- SHOP ----
+const SHOP=[1,2,3].map(i=>({n:G[i].n,cost:G[i].cost,can:()=>own[i]?'OWNED':!own[i-1]?'Needs '+G[i-1].n:'',go:()=>{own[i]=1;setGun(i)}})).concat([
+{n:'Armor +50',cost:120,can:()=>armor>=100?'MAX':'',go:()=>armor=Math.min(100,armor+50)},
+{n:'Damage +20%',cost:250,can:()=>mult>=2.2?'MAX':'',go:()=>mult+=.2},
+{n:'Max HP +25 &amp; full heal',cost:150,can:()=>maxhp>=200?'MAX':'',go:()=>{maxhp+=25;hp=maxhp}}]);
+let shopOpen=false;
+function renderShop(){$('shop').innerHTML='<b style="color:var(--gold)">SHOP</b> — $'+money+' <small>(press number to buy, E to close)</small>'+SHOP.map((s,i)=>{const r=s.can();return`<div class="${r||money<s.cost?'dim':''}">[${i+1}] ${s.n} — $${s.cost} ${r?'('+r+')':''}</div>`}).join('')}
+function buy(i){const s=SHOP[i];if(s&&!s.can()&&money>=s.cost){money-=s.cost;s.go();renderShop()}}
+// ---- INPUT / STATE ----
+const keys={};let started=false,paused=false,dead=false,locked=false,firing=false,wave=0,toSpawn=0,spT=0,waveT=2;
+addEventListener('keydown',e=>{keys[e.code]=1;if(!started||dead)return;
+if(e.code=='KeyE'&&(shopOpen||Math.hypot(P.x,P.z)<8)){shopOpen=!shopOpen;$('shop').style.display=shopOpen?'block':'none';if(shopOpen)renderShop()}
+const n=+e.code.replace('Digit','')-1;if(n>=0&&n<6){if(shopOpen)buy(n);else if(n<4&&own[n])setGun(n)}});
+addEventListener('keyup',e=>keys[e.code]=0);
+addEventListener('mousedown',()=>firing=true);addEventListener('mouseup',()=>firing=false);
+let mxn=0,myn=0;addEventListener('mousemove',e=>{if(!locked){mxn=e.clientX/innerWidth*2-1;myn=e.clientY/innerHeight*2-1;return}yaw-=e.movementX*.0025;pitch=Math.max(-1.4,Math.min(1.4,pitch-e.movementY*.0025))});
+function lock(){try{const p=R.domElement.requestPointerLock();if(p&&p.catch)p.catch(()=>{})}catch(e){}}
+document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===R.domElement;if(locked){$('ov').style.display='none';paused=false}else if(started&&!dead){paused=true;$('ov').style.display='flex';$('ovt').textContent='Paused — click Resume';$('go').textContent='RESUME'}});
+$('go').onclick=()=>{started=true;paused=false;$('ov').style.display='none';lock()};
+function banner(t){const b=$('banner');b.textContent=t;b.style.opacity=1;setTimeout(()=>b.style.opacity=0,1800)}
+function hurt(d){if(armor>0){const a=Math.min(armor,d*.6);armor-=a;d-=a}hp-=d;dmgT=.5;if(hp<=0&&!dead){dead=true;shopOpen=false;$('shop').style.display='none';document.exitPointerLock&&document.exitPointerLock();$('ov').style.display='flex';$('ov').innerHTML=`<h1 style="color:#d33">YOU DIED</h1><div>Survived to wave ${wave} · ${kills} zombies killed</div><button onclick="location.reload()">PLAY AGAIN</button>`}}
+// ---- LOOP ----
+const mm=$('mm').getContext('2d'),S=170/200;let last=performance.now();
+function minimap(){mm.clearRect(0,0,170,170);mm.fillStyle='#2c4a22';mm.fillRect(0,0,170,170);const X=v=>(v+100)*S;
+mm.fillStyle='#3b8be0';lakes.forEach(([x,z,r])=>{mm.beginPath();mm.arc(X(x),X(z),r*S,0,6.3);mm.fill()});
+mm.fillStyle='#b8865a';houses.forEach(([x,z])=>mm.fillRect(X(x-7),X(z-5),14*S,10*S));mm.fillStyle='#f2c94c';mm.fillRect(X(-5),X(-5),10*S,10*S);
+zs.forEach(z=>{mm.fillStyle=z.d.col;mm.beginPath();mm.arc(X(z.x),X(z.z),z.t=='chonky'?3.5:2.2,0,6.3);mm.fill();mm.strokeStyle='#000';mm.lineWidth=.5;mm.stroke()});
+mm.save();mm.translate(X(P.x),X(P.z));mm.rotate(-yaw);mm.fillStyle='#fff';mm.beginPath();mm.moveTo(0,-6);mm.lineTo(4,4);mm.lineTo(-4,4);mm.fill();mm.restore()}
+function loop(t){requestAnimationFrame(loop);const dt=Math.min(.05,(t-last)/1e3);last=t;
+if(started&&!paused&&!dead){const now=t/1e3;
+if(!locked){const dz=v=>Math.abs(v)<.2?0:v-Math.sign(v)*.2;yaw-=dz(mxn)*2.5*dt;pitch=Math.max(-1.4,Math.min(1.4,pitch-dz(myn)*1.5*dt))}
+if(keys.ArrowLeft)yaw+=2*dt;if(keys.ArrowRight)yaw-=2*dt;if(keys.ArrowUp)pitch=Math.min(1.4,pitch+dt);if(keys.ArrowDown)pitch=Math.max(-1.4,pitch-dt);
+const f=(keys.KeyW?1:0)-(keys.KeyS?1:0),s=(keys.KeyD?1:0)-(keys.KeyA?1:0);
+if(f||s){const sn=Math.sin(yaw),cs=Math.cos(yaw);let vx=-sn*f+cs*s,vz=-cs*f-sn*s;const l=Math.hypot(vx,vz),sp=7*(keys.ShiftLeft?1.4:1)*(inLake(P)?.45:1);P.x+=vx/l*sp*dt;P.z+=vz/l*sp*dt;resolve(P,.4)}
+if(firing||keys.Space)fire(now);
+// waves
+if(toSpawn>0){spT-=dt;if(spT<=0&&zs.length<45){spawn();toSpawn--;spT=Math.max(.25,1.2-wave*.06)}}
+else if(!zs.length){waveT-=dt;if(waveT<=0){wave++;if(wave>1)money+=20+wave*5;toSpawn=5+wave*3;waveT=4;banner('WAVE '+wave)}}
+// zombies
+for(const z of zs){const dx=P.x-z.x,dz=P.z-z.z,d=Math.hypot(dx,dz),c=z.d.r+.45;z.cd-=dt;
+if(d>c){const sp=z.d.sp*(inLake(z)?.5:1);z.x+=dx/d*sp*dt;z.z+=dz/d*sp*dt;z.ph+=dt*sp*2}else if(z.cd<=0){hurt(z.d.dmg);z.cd=z.t=='chonky'?1.3:.9}
+for(const o of zs)if(o!==z){const ex=z.x-o.x,ez=z.z-o.z,e=Math.hypot(ex,ez),m=z.d.r+o.d.r;if(e<m&&e>1e-3){z.x+=ex/e*(m-e)*.3;z.z+=ez/e*(m-e)*.3}}
+resolve(z,z.d.r);z.m.position.set(z.x,Math.abs(Math.sin(z.ph))*.1,z.z);z.m.rotation.y=Math.atan2(dx,dz)}
+for(let i=zs.length-1;i>=0;i--)if(zs[i].dead)zs.splice(i,1);
+if(shopOpen){if(Math.hypot(P.x,P.z)>10){shopOpen=false;$('shop').style.display='none'}else renderShop()}
+}
+for(let i=bullets.length-1;i>=0;i--){const b=bullets[i],v=160*dt;b.t+=v;b.m.position.x+=b.dx*v;b.m.position.y+=b.dy*v;b.m.position.z+=b.dz*v;if(b.t>=b.end){scene.remove(b.m);bullets.splice(i,1)}}
+recoil=Math.max(0,recoil-dt*8);flash.intensity=Math.max(0,flash.intensity-dt*30);hmT=Math.max(0,hmT-dt);dmgT=Math.max(0,dmgT-dt);
+gunG.position.z=-.55+recoil*.1;cam.position.set(P.x,1.7,P.z);cam.rotation.set(pitch,yaw,0);
+$('wave').textContent='WAVE '+Math.max(1,wave);$('left').textContent=(zs.length+toSpawn)+' zombies left';
+$('hp').style.width=Math.max(0,hp/maxhp*100)+'%';$('hpt').textContent=Math.ceil(Math.max(0,hp))+'/'+maxhp;$('ar').style.width=armor+'%';
+$('money').textContent='$'+money;$('kills').textContent='Kills: '+kills;
+$('bar').innerHTML=G.map((g,i)=>`<span style="opacity:${own[i]?1:.3};${i==cur?'color:#f2c94c;font-weight:700':''}">[${i+1}] ${g.n}</span>`).join(' ');
+$('prompt').textContent=!shopOpen&&Math.hypot(P.x,P.z)<8?'Press E to open the shop':inLake(P)?'Swimming — slowed!':'';
+$('hm').style.opacity=hmT>0?1:0;$('dmg').style.opacity=dmgT*1.5;
+minimap();R.render(scene,cam)}
+requestAnimationFrame(loop);
+</script></body></html>
